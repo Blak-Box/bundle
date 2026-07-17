@@ -1,0 +1,3 @@
+# Deterministic line endings: all text is stored and checked out as LF so
+# gofmt and CI agree across Windows and Linux working copies.
+* text=auto eol=lf

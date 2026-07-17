@@ -5,6 +5,7 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/binary"
+	"strings"
 	"testing"
 )
 
@@ -107,17 +108,100 @@ func splitFrames(t *testing.T, b []byte) [][]byte {
 func TestStreamRejectsReorder(t *testing.T) {
 	cek, _ := GenerateCEK()
 	ct := encryptToBytes(t, randBytes(t, SegmentSize+100), cek, nil)
-	frames := splitFrames(t, ct)
+	frames := splitFrames(t, ct[streamIDSize:])
 	if len(frames) != 2 {
 		t.Fatalf("expected 2 frames, got %d", len(frames))
 	}
-	// Swap the two segments and re-serialize.
+	// Swap the two segments, keeping the stream-id preamble.
 	var swapped bytes.Buffer
+	swapped.Write(ct[:streamIDSize])
 	swapped.Write(frames[1])
 	swapped.Write(frames[0])
 	var out bytes.Buffer
 	if err := DecryptStream(&out, bytes.NewReader(swapped.Bytes()), cek, nil); err == nil {
 		t.Fatal("decrypt accepted reordered segments")
+	}
+}
+
+func TestStreamRejectsOversizedLength(t *testing.T) {
+	cek, _ := GenerateCEK()
+	// A well-formed stream-id preamble followed by a frame header claiming
+	// ~2 GiB. DecryptStream must reject BEFORE allocating (F1).
+	var b bytes.Buffer
+	b.Write(make([]byte, streamIDSize))
+	b.Write([]byte{0, 0x7f, 0xff, 0xff, 0xff}) // flags=0, len=0x7fffffff
+	var out bytes.Buffer
+	err := DecryptStream(&out, bytes.NewReader(b.Bytes()), cek, nil)
+	if err == nil || !strings.Contains(err.Error(), "out of range") {
+		t.Fatalf("expected out-of-range rejection, got %v", err)
+	}
+}
+
+func TestStreamRejectsSplicingAcrossStreams(t *testing.T) {
+	cek, _ := GenerateCEK() // SAME cek + SAME (nil) streamAAD for both streams
+	a := encryptToBytes(t, randBytes(t, SegmentSize+100), cek, nil)
+	bStream := encryptToBytes(t, randBytes(t, SegmentSize+100), cek, nil)
+	fa := splitFrames(t, a[streamIDSize:])
+	fb := splitFrames(t, bStream[streamIDSize:])
+	// Stream A's preamble + A's first segment + B's last segment.
+	var spliced bytes.Buffer
+	spliced.Write(a[:streamIDSize])
+	spliced.Write(fa[0])
+	spliced.Write(fb[1])
+	var out bytes.Buffer
+	if err := DecryptStream(&out, bytes.NewReader(spliced.Bytes()), cek, nil); err == nil {
+		t.Fatal("decrypt accepted a segment spliced from another stream under the same CEK")
+	}
+}
+
+func TestStreamRejectsExtension(t *testing.T) {
+	cek, _ := GenerateCEK()
+	ct := encryptToBytes(t, randBytes(t, 100), cek, nil) // one last segment
+	extended := append(append([]byte{}, ct...), 0x00, 0x01, 0x02)
+	var out bytes.Buffer
+	err := DecryptStream(&out, bytes.NewReader(extended), cek, nil)
+	if err == nil || !strings.Contains(err.Error(), "trailing data") {
+		t.Fatalf("expected trailing-data rejection, got %v", err)
+	}
+}
+
+func TestStreamRejectsDuplicateSegment(t *testing.T) {
+	cek, _ := GenerateCEK()
+	ct := encryptToBytes(t, randBytes(t, SegmentSize+100), cek, nil)
+	frames := splitFrames(t, ct[streamIDSize:])
+	var dup bytes.Buffer
+	dup.Write(ct[:streamIDSize])
+	dup.Write(frames[0])
+	dup.Write(frames[0]) // resend segment 0 in position 1
+	var out bytes.Buffer
+	if err := DecryptStream(&out, bytes.NewReader(dup.Bytes()), cek, nil); err == nil {
+		t.Fatal("decrypt accepted a duplicated segment")
+	}
+}
+
+func TestWrapRejectsNonP384Recipient(t *testing.T) {
+	p256, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("p256 key: %v", err)
+	}
+	cek, _ := GenerateCEK()
+	if _, err := WrapCEK(p256.PublicKey(), cek); err == nil {
+		t.Fatal("wrap accepted a non-P384 recipient")
+	}
+}
+
+func TestWrapRejectsWrongCEKLength(t *testing.T) {
+	recip, _ := ecdh.P384().GenerateKey(rand.Reader)
+	if _, err := WrapCEK(recip.PublicKey(), make([]byte, 16)); err == nil {
+		t.Fatal("wrap accepted a wrong-length CEK")
+	}
+}
+
+func TestUnwrapRejectsMalformedEphemeral(t *testing.T) {
+	recip, _ := ecdh.P384().GenerateKey(rand.Reader)
+	bad := &WrapStanza{EphemeralPublic: []byte("not a valid P-384 point"), Wrapped: make([]byte, 60)}
+	if _, err := UnwrapCEK(recip, bad); err == nil {
+		t.Fatal("unwrap accepted a malformed ephemeral key")
 	}
 }
 

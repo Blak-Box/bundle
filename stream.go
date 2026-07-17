@@ -15,19 +15,29 @@ import (
 // Bulk encryption — the AES-256-GCM STREAM (decision D1).
 //
 // The payload is split into fixed-size segments, each sealed under a per-stream
-// key with a fresh RANDOM 96-bit nonce (via cipher.NewGCMWithRandomNonce, which
-// is the FIPS-safe construction — a counter/deterministic nonce fails
-// GOFIPS140=only). The segment index and a last-segment flag are bound in the
-// GCM associated data, NOT the nonce, which authenticates segment ordering,
-// truncation, and duplication.
+// key with a fresh RANDOM 96-bit nonce (via cipher.NewGCMWithRandomNonce, the
+// FIPS-safe construction — a counter/deterministic nonce fails GOFIPS140=only).
+// Each segment's GCM associated data binds a per-stream random ID, the caller's
+// stream AAD, the segment index, and a last-segment flag (never the nonce).
+// This authenticates segment ordering, truncation, duplication, extension, and
+// cross-stream splicing: the random stream ID means a segment from one stream
+// cannot be substituted into another even if both share a CEK.
 //
-// Wire framing, one frame per segment:
+// Wire format:
 //
-//	[1 byte flags][4 byte big-endian ciphertext length][ciphertext]
+//	[16-byte stream ID], then per segment:
+//	[1-byte flags][4-byte big-endian ciphertext length][ciphertext]
 //
-// where flags bit 0 = "this is the last segment". Every stream ends with
-// exactly one last-flagged segment (an empty one if the plaintext length is a
-// multiple of the segment size), so a truncated stream is always detected.
+// flags bit 0 = "last segment". Every stream ends with exactly one last-flagged
+// segment (an empty one if the plaintext length is a multiple of the segment
+// size), so truncation is always detected. The stream ID preamble is public and
+// self-authenticating: every segment's AAD binds it, so tampering with it makes
+// every Open fail.
+//
+// DecryptStream writes each segment's plaintext as it is authenticated, so no
+// UNauthenticated plaintext is ever released — but a truncated stream still
+// yields an authentic prefix. Treat the output as trustworthy only after
+// DecryptStream returns nil.
 
 const (
 	// SegmentSize is the plaintext size of each STREAM segment (D1): 1 MiB.
@@ -36,6 +46,15 @@ const (
 	CEKSize = 32
 
 	streamKeyInfo = "blakbox/bundle/stream/aes256gcm/v1"
+
+	streamIDSize = 16
+	// gcmOverhead is the per-segment expansion of NewGCMWithRandomNonce: a
+	// 12-byte prepended random nonce plus a 16-byte GCM tag.
+	gcmOverhead = 28
+	// maxSegmentCT is the largest legitimate segment ciphertext. Anything
+	// larger is forged and is rejected before allocation (F1: no unbounded
+	// allocation from an attacker-controlled length).
+	maxSegmentCT = SegmentSize + gcmOverhead
 
 	flagLast byte = 1 << 0
 )
@@ -66,11 +85,12 @@ func streamAEAD(cek []byte) (cipher.AEAD, error) {
 	return cipher.NewGCMWithRandomNonce(block)
 }
 
-// segAAD binds a segment's index and last-flag into its GCM associated data
-// (D1): the segment index and last-segment flag live in the AAD, never the
-// nonce. streamAAD is optional caller context bound to every segment.
-func segAAD(streamAAD []byte, segIdx uint64, isLast bool) []byte {
-	aad := make([]byte, 0, len(streamAAD)+9)
+// segAAD binds the stream ID, caller AAD, segment index, and last-flag into a
+// segment's GCM associated data (D1) — position, terminality, and stream
+// identity are all authenticated; the nonce carries none of it.
+func segAAD(streamID, streamAAD []byte, segIdx uint64, isLast bool) []byte {
+	aad := make([]byte, 0, len(streamID)+len(streamAAD)+9)
+	aad = append(aad, streamID...)
 	aad = append(aad, streamAAD...)
 	var idx [8]byte
 	binary.BigEndian.PutUint64(idx[:], segIdx)
@@ -89,29 +109,36 @@ func EncryptStream(w io.Writer, r io.Reader, cek, streamAAD []byte) error {
 	if err != nil {
 		return err
 	}
+	streamID := make([]byte, streamIDSize)
+	if _, err := rand.Read(streamID); err != nil {
+		return fmt.Errorf("bundle: generate stream id: %w", err)
+	}
+	if _, err := w.Write(streamID); err != nil {
+		return fmt.Errorf("bundle: write stream id: %w", err)
+	}
 	buf := make([]byte, SegmentSize)
 	var segIdx uint64
 	for {
 		n, rerr := io.ReadFull(r, buf)
 		switch rerr {
 		case nil:
-			if werr := writeSegment(w, aead, streamAAD, segIdx, false, buf[:n]); werr != nil {
+			if werr := writeSegment(w, aead, streamID, streamAAD, segIdx, false, buf[:n]); werr != nil {
 				return werr
 			}
 			segIdx++
 		case io.ErrUnexpectedEOF:
-			return writeSegment(w, aead, streamAAD, segIdx, true, buf[:n])
+			return writeSegment(w, aead, streamID, streamAAD, segIdx, true, buf[:n])
 		case io.EOF:
-			return writeSegment(w, aead, streamAAD, segIdx, true, buf[:0])
+			return writeSegment(w, aead, streamID, streamAAD, segIdx, true, buf[:0])
 		default:
 			return fmt.Errorf("bundle: read plaintext: %w", rerr)
 		}
 	}
 }
 
-func writeSegment(w io.Writer, aead cipher.AEAD, streamAAD []byte, segIdx uint64, isLast bool, pt []byte) error {
-	ct := aead.Seal(nil, nil, pt, segAAD(streamAAD, segIdx, isLast))
-	if uint64(len(ct)) > 0xffffffff {
+func writeSegment(w io.Writer, aead cipher.AEAD, streamID, streamAAD []byte, segIdx uint64, isLast bool, pt []byte) error {
+	ct := aead.Seal(nil, nil, pt, segAAD(streamID, streamAAD, segIdx, isLast))
+	if len(ct) > maxSegmentCT {
 		return errors.New("bundle: segment ciphertext too large")
 	}
 	var hdr [5]byte
@@ -129,13 +156,16 @@ func writeSegment(w io.Writer, aead cipher.AEAD, streamAAD []byte, segIdx uint64
 }
 
 // DecryptStream reverses EncryptStream, writing recovered plaintext to w. It
-// rejects any tamper, reorder, or truncation: the segment index and last-flag
-// are authenticated, a stream that ends before a last-flagged segment is
-// rejected, and trailing data after the last segment is rejected.
+// rejects any tamper, reorder, duplication, truncation, extension, or
+// cross-stream splice.
 func DecryptStream(w io.Writer, r io.Reader, cek, streamAAD []byte) error {
 	aead, err := streamAEAD(cek)
 	if err != nil {
 		return err
+	}
+	streamID := make([]byte, streamIDSize)
+	if _, err := io.ReadFull(r, streamID); err != nil {
+		return fmt.Errorf("bundle: read stream id: %w", err)
 	}
 	var segIdx uint64
 	for {
@@ -147,11 +177,16 @@ func DecryptStream(w io.Writer, r io.Reader, cek, streamAAD []byte) error {
 			return fmt.Errorf("bundle: read segment header: %w", err)
 		}
 		isLast := hdr[0]&flagLast != 0
-		ct := make([]byte, binary.BigEndian.Uint32(hdr[1:]))
+		ctLen := binary.BigEndian.Uint32(hdr[1:])
+		// F1: reject an out-of-range length BEFORE allocating.
+		if ctLen < gcmOverhead || ctLen > maxSegmentCT {
+			return fmt.Errorf("bundle: segment %d ciphertext length %d out of range", segIdx, ctLen)
+		}
+		ct := make([]byte, ctLen)
 		if _, err := io.ReadFull(r, ct); err != nil {
 			return fmt.Errorf("bundle: read segment %d: %w", segIdx, err)
 		}
-		pt, err := aead.Open(nil, nil, ct, segAAD(streamAAD, segIdx, isLast))
+		pt, err := aead.Open(nil, nil, ct, segAAD(streamID, streamAAD, segIdx, isLast))
 		if err != nil {
 			return fmt.Errorf("bundle: open segment %d: %w", segIdx, err)
 		}

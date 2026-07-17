@@ -4,7 +4,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rand"
-	"strings"
 	"testing"
 )
 
@@ -39,28 +38,6 @@ func TestPolicyRejectsUnpinnedSignature(t *testing.T) {
 	pol := &Policy{Mode: Phase1, Anchors: []Anchor{ecdsaAnchor(other)}}
 	if _, err := pol.VerifyStatement(env); err == nil {
 		t.Fatal("policy accepted a signature from an unpinned key")
-	}
-}
-
-func TestPolicyEnforced2of2NeedsMLDSA(t *testing.T) {
-	priv := mustKey(t)
-	env, err := SignStatement(priv, sampleStatement())
-	if err != nil {
-		t.Fatalf("sign: %v", err)
-	}
-	// A 2-of-2 policy cannot be satisfied by ECDSA alone. Pinning an ML-DSA
-	// anchor is not yet supported, so verification fails loudly rather than
-	// silently degrading to a single signature.
-	pol := &Policy{
-		Mode: Enforced2of2,
-		Anchors: []Anchor{
-			ecdsaAnchor(priv),
-			{Algorithm: AlgMLDSA87, Public: &priv.PublicKey}, // placeholder
-		},
-	}
-	_, err = pol.VerifyStatement(env)
-	if err == nil || !strings.Contains(err.Error(), "ML-DSA-87") {
-		t.Fatalf("expected ML-DSA-not-supported gate, got %v", err)
 	}
 }
 

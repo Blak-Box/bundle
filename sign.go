@@ -21,6 +21,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+
+	"filippo.io/mldsa"
 )
 
 // ErrWrongCurve is returned when a key is not on the P-384 curve.
@@ -91,9 +93,17 @@ func (v *ecdsaP384Verifier) KeyID() (string, error) { return v.keyID, nil }
 // by PUBLIC KEY, never by the envelope's keyid — the keyid is a
 // debugging/telemetry hint only and is never trusted for a security decision.
 func keyIDFromPublic(pub crypto.PublicKey) (string, error) {
-	der, err := x509.MarshalPKIXPublicKey(pub)
-	if err != nil {
-		return "", fmt.Errorf("bundle: marshal public key: %w", err)
+	var der []byte
+	switch k := pub.(type) {
+	case *mldsa.PublicKey:
+		// ML-DSA keys are not stdlib types; fingerprint their canonical bytes.
+		der = k.Bytes()
+	default:
+		var err error
+		der, err = x509.MarshalPKIXPublicKey(pub)
+		if err != nil {
+			return "", fmt.Errorf("bundle: marshal public key: %w", err)
+		}
 	}
 	sum := sha256.Sum256(der)
 	return hex.EncodeToString(sum[:]), nil

@@ -34,9 +34,21 @@ jobs:
       - name: test
         run: go test -race ./...
 
-      # The bundle library MUST build and pass under the FIPS 140-3 Go module
-      # (GOFIPS140=v1.0.0, CMVP #5247) — the appliance ships in FIPS mode. This
-      # is the guardrail that catches any non-FIPS-safe construct (e.g. a
-      # counter-nonce STREAM, which fails GOFIPS140) the moment it lands.
+      # The library must build and pass under the FIPS 140-3 Go module
+      # (GOFIPS140=v1.0.0, CMVP #5247) — the appliance ships in FIPS mode.
+      # ML-DSA-87 runs here as a non-validated hedge algorithm.
       - name: test (FIPS 140-3 module)
         run: GOFIPS140=v1.0.0 go test ./...
+
+      # The phase-1 TRUST path (ECDSA-P384 + AES-256-GCM STREAM + ECDH keywrap)
+      # must additionally pass the STRICT fips140=only runtime, which rejects
+      # every non-approved algorithm. This is what proves the STREAM uses a
+      # FIPS-safe random nonce (a counter/deterministic nonce would fail here)
+      # and that no approved-path code slipped in a non-validated primitive.
+      # ML-DSA-87 is deliberately EXCLUDED: it is not in the validated module
+      # (a phase-2 hedge, AU-side) and is not a validated-PQC claim until the
+      # module certifies it (~2027).
+      - name: strict FIPS (approved path only)
+        run: >-
+          GOFIPS140=v1.0.0 GODEBUG=fips140=only
+          go test -run '^(TestSignVerify|TestVerifyRejects|TestSignRejects|TestStream|TestKeywrap|TestWrap|TestUnwrap|TestPolicy|TestMode|TestSealOpen)' ./...

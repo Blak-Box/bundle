@@ -22,5 +22,12 @@ Consumed by:
 - Built with the Go FIPS module (`GOFIPS140=v1.0.0`) — the only FIPS 140-3 module validated on aarch64 Linux.
 
 ## Status
-`v0.0.1` — scaffold. The spec + signing implementation land next; this is where the standing
-Ed25519 -> ECDSA P-384 migration happens **once** for the whole product.
+Core crypto implemented and tested (standard + FIPS): ECDSA-P384 sign/verify over DSSE +
+in-toto Statement; algorithm-typed threshold policy (phase-1 1-of ECDSA -> enforced 2-of-2);
+AES-256-GCM STREAM (D1) + ECDH-P384 key wrap (D4); and the ML-DSA-87 second signer (phase-2
+hedge — not FIPS-validated yet, so never the sole trust path). The phase-1 path passes strict
+`fips140=only`; ML-DSA runs under the FIPS build but outside strict mode by design.
+
+Still to land: FastCDC chunk store, published KAT test vectors, the official
+`in-toto/attestation/go/v1` Statement type, and the CLI. The standing Ed25519 -> ECDSA P-384
+update-chain migration consumes this library **once** for the whole product.

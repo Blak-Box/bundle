@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: build
+        run: go build ./...
+
+      - name: test
+        run: go test -race ./...
+
+      # The bundle library MUST build and pass under the FIPS 140-3 Go module
+      # (GOFIPS140=v1.0.0, CMVP #5247) — the appliance ships in FIPS mode. This
+      # is the guardrail that catches any non-FIPS-safe construct (e.g. a
+      # counter-nonce STREAM, which fails GOFIPS140) the moment it lands.
+      - name: test (FIPS 140-3 module)
+        run: GOFIPS140=v1.0.0 go test ./...

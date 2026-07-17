@@ -276,3 +276,15 @@ func TestSealOpenIntegration(t *testing.T) {
 		t.Fatal("end-to-end payload mismatch")
 	}
 }
+
+// TestSegmentIndexCap enforces the per-key random-nonce invocation bound
+// (NIST SP 800-38D): at most 2^32 segments under one stream key. The cap is
+// unreachable by streaming (~4 EiB), so the guard is tested directly.
+func TestSegmentIndexCap(t *testing.T) {
+	if err := segmentIndexOK(maxStreamSegments - 1); err != nil {
+		t.Fatalf("last legal segment index rejected: %v", err)
+	}
+	if err := segmentIndexOK(maxStreamSegments); err == nil {
+		t.Fatal("segment index at the nonce bound was accepted")
+	}
+}

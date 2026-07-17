@@ -51,6 +51,13 @@ const (
 	// gcmOverhead is the per-segment expansion of NewGCMWithRandomNonce: a
 	// 12-byte prepended random nonce plus a 16-byte GCM tag.
 	gcmOverhead = 28
+	// maxStreamSegments caps the number of segments sealed under one
+	// stream key. NewGCMWithRandomNonce's random 96-bit nonces are safe for
+	// at most 2^32 invocations per key (NIST SP 800-38D collision bound);
+	// beyond that the birthday risk on nonces becomes non-negligible. At
+	// 1 MiB per segment the cap is ~4 EiB of plaintext — unreachable in
+	// practice, but the guard makes the bound explicit and enforced.
+	maxStreamSegments = 1 << 32
 	// maxSegmentCT is the largest legitimate segment ciphertext. Anything
 	// larger is forged and is rejected before allocation (F1: no unbounded
 	// allocation from an attacker-controlled length).
@@ -136,7 +143,18 @@ func EncryptStream(w io.Writer, r io.Reader, cek, streamAAD []byte) error {
 	}
 }
 
+// segmentIndexOK enforces the per-key invocation cap (see maxStreamSegments).
+func segmentIndexOK(segIdx uint64) error {
+	if segIdx >= maxStreamSegments {
+		return fmt.Errorf("bundle: stream exceeds %d segments — the random-nonce bound for one key", uint64(maxStreamSegments))
+	}
+	return nil
+}
+
 func writeSegment(w io.Writer, aead cipher.AEAD, streamID, streamAAD []byte, segIdx uint64, isLast bool, pt []byte) error {
+	if err := segmentIndexOK(segIdx); err != nil {
+		return err
+	}
 	ct := aead.Seal(nil, nil, pt, segAAD(streamID, streamAAD, segIdx, isLast))
 	if len(ct) > maxSegmentCT {
 		return errors.New("bundle: segment ciphertext too large")
@@ -175,6 +193,9 @@ func DecryptStream(w io.Writer, r io.Reader, cek, streamAAD []byte) error {
 				return errors.New("bundle: stream truncated: ended before a last segment")
 			}
 			return fmt.Errorf("bundle: read segment header: %w", err)
+		}
+		if err := segmentIndexOK(segIdx); err != nil {
+			return err
 		}
 		isLast := hdr[0]&flagLast != 0
 		ctLen := binary.BigEndian.Uint32(hdr[1:])

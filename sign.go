@@ -83,12 +83,14 @@ func (v *ecdsaP384Verifier) Public() crypto.PublicKey { return v.pub }
 
 func (v *ecdsaP384Verifier) KeyID() (string, error) { return v.keyID, nil }
 
-// keyIDFromPublic derives an advisory DSSE keyid = hex(SHA-256(SPKI DER)).
+// keyIDFromPublic derives a stable fingerprint = hex(SHA-256(SPKI DER)) for a
+// public key. It is used both as the advisory DSSE keyid and, in the policy
+// package, to de-duplicate anchors by identity.
 //
 // Per decision D3 the verifier policy MUST match signatures to pinned anchors
-// by PUBLIC KEY, never by keyid — this value is a debugging/telemetry hint
-// only and is never trusted for a security decision.
-func keyIDFromPublic(pub *ecdsa.PublicKey) (string, error) {
+// by PUBLIC KEY, never by the envelope's keyid — the keyid is a
+// debugging/telemetry hint only and is never trusted for a security decision.
+func keyIDFromPublic(pub crypto.PublicKey) (string, error) {
 	der, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
 		return "", fmt.Errorf("bundle: marshal public key: %w", err)

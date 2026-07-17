@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"filippo.io/mldsa"
 	"github.com/secure-systems-lab/go-securesystemslib/dsse"
 )
 
@@ -26,6 +27,33 @@ func SignStatement(priv *ecdsa.PrivateKey, st *Statement) (*dsse.Envelope, error
 		return nil, fmt.Errorf("bundle: new envelope signer: %w", err)
 	}
 	env, err := es.SignPayload(context.Background(), PayloadType, body)
+	if err != nil {
+		return nil, fmt.Errorf("bundle: sign payload: %w", err)
+	}
+	return env, nil
+}
+
+// SignStatementHybrid signs st with BOTH ECDSA-P384 and ML-DSA-87, producing a
+// 2-of-2 DSSE envelope — the post-2030 hybrid-PQC path. Verify it with a Policy
+// in Enforced2of2 mode pinned to the matching ECDSA and ML-DSA anchors.
+func SignStatementHybrid(ecdsaPriv *ecdsa.PrivateKey, mldsaPriv *mldsa.PrivateKey, st *Statement) (*dsse.Envelope, error) {
+	body, err := json.Marshal(st)
+	if err != nil {
+		return nil, fmt.Errorf("bundle: marshal statement: %w", err)
+	}
+	es, err := newECDSASigner(ecdsaPriv)
+	if err != nil {
+		return nil, err
+	}
+	ms, err := newMLDSASigner(mldsaPriv)
+	if err != nil {
+		return nil, err
+	}
+	signer, err := dsse.NewEnvelopeSigner(es, ms)
+	if err != nil {
+		return nil, fmt.Errorf("bundle: new envelope signer: %w", err)
+	}
+	env, err := signer.SignPayload(context.Background(), PayloadType, body)
 	if err != nil {
 		return nil, fmt.Errorf("bundle: sign payload: %w", err)
 	}

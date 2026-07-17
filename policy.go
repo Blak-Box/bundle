@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	"filippo.io/mldsa"
 	"github.com/secure-systems-lab/go-securesystemslib/dsse"
 )
 
@@ -71,9 +72,15 @@ func (p *Policy) verifiers() ([]boundVerifier, error) {
 			}
 			out = append(out, boundVerifier{v: v, anchor: a})
 		case AlgMLDSA87:
-			// The ML-DSA-87 second signer lands with GOFIPS140 + the crypto/mldsa
-			// swap; until then a policy cannot pin an ML-DSA anchor.
-			return nil, errors.New("bundle: ML-DSA-87 anchors not yet supported (phase 2)")
+			pub, ok := a.Public.(*mldsa.PublicKey)
+			if !ok {
+				return nil, fmt.Errorf("bundle: anchor tagged %s but public key is %T", a.Algorithm, a.Public)
+			}
+			v, err := newMLDSAVerifier(pub)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, boundVerifier{v: v, anchor: a})
 		default:
 			return nil, fmt.Errorf("bundle: unknown anchor algorithm %q", a.Algorithm)
 		}

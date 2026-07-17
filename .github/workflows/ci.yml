@@ -51,4 +51,12 @@ jobs:
       - name: strict FIPS (approved path only)
         run: >-
           GOFIPS140=v1.0.0 GODEBUG=fips140=only
-          go test -run '^(TestSignVerify|TestVerifyRejects|TestSignRejects|TestStream|TestKeywrap|TestWrap|TestUnwrap|TestPolicy|TestMode|TestSealOpen|TestCLI)' ./...
+          go test -run '^(TestSignVerify|TestVerifyRejects|TestSignRejects|TestStream|TestKeywrap|TestWrap|TestUnwrap|TestPolicy|TestMode|TestSealOpen|TestCLI|TestSegment)' ./...
+
+      # The appliance is aarch64 (GB10 / DGX OS 7): every shippable binary
+      # must cross-compile for it under the FIPS module. Build-plan Sprint-1
+      # named this smoke; the Makefile targets alone are not a CI gate.
+      - name: cross-compile linux/arm64 (FIPS)
+        run: |
+          GOOS=linux GOARCH=arm64 GOFIPS140=v1.0.0 go build ./...
+          GOOS=linux GOARCH=amd64 GOFIPS140=v1.0.0 go build ./...

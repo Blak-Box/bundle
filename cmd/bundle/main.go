@@ -44,6 +44,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 
 	"github.com/blak-box/bundle"
 	"github.com/secure-systems-lab/go-securesystemslib/dsse"
@@ -69,6 +70,8 @@ func main() {
 		err = runVerify(os.Args[2:])
 	case "fingerprint":
 		err = runFingerprint(os.Args[2:])
+	case "version":
+		err = runVersion(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -101,9 +104,53 @@ Usage:
   bundle verify -anchor PUB.pem [-anchor ...] -artifact FILE -in ENV.json
                 [-predicate-type TYPE] [-subject-name NAME]
   bundle fingerprint (-key KEY.pem | -pub PUB.pem)
+  bundle version
 
 Exit codes: 0 ok · 1 verification failed · 2 usage error
 `)
+}
+
+// ── version ─────────────────────────────────────────────────────────────
+
+// runVersion prints build provenance, including the GOFIPS140 build setting.
+// The appliance ships in FIPS mode and its verify path MUST run through the
+// FIPS 140-3 validated module (CMVP #5247), which is selected at BUILD time
+// (GOFIPS140=v1.0.0). That property is otherwise invisible at runtime, so we
+// surface it here: `bundle version` on the shipped binary must report
+// fips140=v1.0.0. Factory imaging and release provenance can assert on it.
+func runVersion(argv []string) error {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	if err := fs.Parse(argv); err != nil {
+		return errUsage
+	}
+	fips := "off"
+	goVersion := "unknown"
+	var goos, goarch, vcs string
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		goVersion = bi.GoVersion
+		for _, s := range bi.Settings {
+			switch s.Key {
+			case "GOFIPS140":
+				if s.Value != "" {
+					fips = s.Value
+				}
+			case "GOOS":
+				goos = s.Value
+			case "GOARCH":
+				goarch = s.Value
+			case "vcs.revision":
+				vcs = s.Value
+			}
+		}
+	}
+	fmt.Printf("bundle CLI\n")
+	fmt.Printf("  go:       %s\n", goVersion)
+	fmt.Printf("  platform: %s/%s\n", goos, goarch)
+	fmt.Printf("  fips140:  %s\n", fips)
+	if vcs != "" {
+		fmt.Printf("  revision: %s\n", vcs)
+	}
+	return nil
 }
 
 // ── fingerprint ─────────────────────────────────────────────────────────

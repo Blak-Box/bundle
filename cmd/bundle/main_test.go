@@ -265,3 +265,16 @@ func TestCLIVerifyRequiresArgs(t *testing.T) {
 		t.Fatal("verify accepted a call with no anchor and no envelope")
 	}
 }
+
+// TestCLIVersionReportsFips — `bundle version` runs and surfaces a fips140 line
+// so factory imaging / release provenance can assert the shipped binary was
+// FIPS-built.
+func TestCLIVersionReportsFips(t *testing.T) {
+	out, err := captureStdout(t, func() error { return runVersion(nil) })
+	if err != nil {
+		t.Fatalf("version: %v", err)
+	}
+	if !strings.Contains(out, "fips140:") {
+		t.Fatalf("version output missing fips140 line:\n%s", out)
+	}
+}

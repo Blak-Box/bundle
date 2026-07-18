@@ -60,3 +60,18 @@ jobs:
         run: |
           GOOS=linux GOARCH=arm64 GOFIPS140=v1.0.0 go build ./...
           GOOS=linux GOARCH=amd64 GOFIPS140=v1.0.0 go build ./...
+
+      # FIPS provenance is invisible at runtime unless asserted: prove the
+      # amd64 build reports the validated module and that a PLAIN build does
+      # NOT — so `bundle version` is a trustworthy factory signal, not decor.
+      - name: FIPS provenance assertion
+        run: |
+          set -euo pipefail
+          GOFIPS140=v1.0.0 go build -o /tmp/bundle-fips ./cmd/bundle
+          /tmp/bundle-fips version
+          /tmp/bundle-fips version | grep -qE 'fips140:[[:space:]]*v1\.0\.0' \
+            || { echo "::error::FIPS build did not report fips140=v1.0.0"; exit 1; }
+          go build -o /tmp/bundle-plain ./cmd/bundle
+          /tmp/bundle-plain version | grep -qE 'fips140:[[:space:]]*off' \
+            || { echo "::error::plain build unexpectedly reports FIPS — the assertion is meaningless"; exit 1; }
+          echo "FIPS provenance is asserted end-to-end"

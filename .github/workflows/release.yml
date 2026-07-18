@@ -1,0 +1,71 @@
+name: release
+
+# Produce the FIPS-built `bundle` CLI artifacts the factory installs onto the
+# appliance (/opt/blakbox/bin/bundle) and the x86 build host. Runs on a version
+# tag, or on demand. Every artifact is built with GOFIPS140=v1.0.0 (fail if
+# unset) and ships an auditable provenance file (`go version -m`), so the
+# shipped binary's FIPS build can be proven after the fact.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # attach assets to the release
+
+env:
+  GOFIPS140: v1.0.0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: guard — GOFIPS140 must be set
+        run: |
+          set -euo pipefail
+          [ -n "${GOFIPS140:-}" ] || { echo "::error::GOFIPS140 is empty — refusing to ship a non-validated build"; exit 1; }
+          echo "building with GOFIPS140=$GOFIPS140"
+
+      - name: build FIPS binaries (appliance arm64 + host amd64)
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          GOOS=linux GOARCH=arm64 go build -trimpath -o dist/bundle-linux-arm64 ./cmd/bundle
+          GOOS=linux GOARCH=amd64 go build -trimpath -o dist/bundle-linux-amd64 ./cmd/bundle
+
+      - name: provenance + FIPS assertion
+        run: |
+          set -euo pipefail
+          # The host-arch binary must self-report the validated module.
+          dist/bundle-linux-amd64 version | tee dist/bundle-linux-amd64.version.txt
+          dist/bundle-linux-amd64 version | grep -qE 'fips140:[[:space:]]*v1\.0\.0' \
+            || { echo "::error::amd64 artifact is not FIPS-built"; exit 1; }
+          # go version -m embeds the GOFIPS140 build setting — the auditable record.
+          go version -m dist/bundle-linux-arm64 | tee dist/bundle-linux-arm64.buildinfo.txt
+          go version -m dist/bundle-linux-amd64 | tee -a dist/bundle-linux-amd64.buildinfo.txt
+          grep -q 'GOFIPS140=v1.0.0' dist/bundle-linux-arm64.buildinfo.txt \
+            || { echo "::error::arm64 buildinfo does not record GOFIPS140=v1.0.0"; exit 1; }
+          ( cd dist && sha256sum bundle-linux-* > SHA256SUMS )
+
+      - name: upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-fips-binaries
+          path: dist/*
+
+      - name: attach to GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/bundle-linux-arm64
+            dist/bundle-linux-amd64
+            dist/SHA256SUMS
+            dist/*.buildinfo.txt

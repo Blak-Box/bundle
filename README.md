@@ -12,8 +12,7 @@ artifacts **independently, without trusting us** — the "verifiable transparenc
 
 Consumed by:
 - `Blak-Box/exporter` — customer-side, produces bundles
-- `Blak-Box/verifier` — offline verifier
-- `Blak-Box/appliance` — on-box; consumes by **spec + verifier binary**, never links this Go directly
+- `Blak-Box/appliance` — on-box airlock (scanner / egress / offline verifier); consumes by **spec + verifier binary**, never links this Go directly
 
 ## Crypto (design: `docs/24-tender-airlock.md` §5 in the appliance repo)
 - Envelope: in-toto v1 Statement in a **DSSE v1.0.2** envelope, verified with a **2-of-2 algorithm-typed threshold**.
@@ -28,6 +27,8 @@ AES-256-GCM STREAM (D1) + ECDH-P384 key wrap (D4); and the ML-DSA-87 second sign
 hedge — not FIPS-validated yet, so never the sole trust path). The phase-1 path passes strict
 `fips140=only`; ML-DSA runs under the FIPS build but outside strict mode by design.
 
-Still to land: FastCDC chunk store, published KAT test vectors, the official
-`in-toto/attestation/go/v1` Statement type, and the CLI. The standing Ed25519 -> ECDSA P-384
-update-chain migration consumes this library **once** for the whole product.
+The `bundle` CLI ships from this repo's release workflow (FIPS-built, provenance-asserted:
+`bundle version` reports `fips140:v1.0.0`; SHA256SUMS attached per release). Still to land:
+FastCDC chunk store, published KAT test vectors, and the official
+`in-toto/attestation/go/v1` Statement type. The Ed25519 -> ECDSA P-384 update-chain
+migration consumes this library **once** for the whole product.

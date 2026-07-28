@@ -110,3 +110,68 @@ jobs:
           /tmp/bundle-plain version | grep -qE 'fips140:[[:space:]]*off' \
             || { echo "::error::plain build unexpectedly reports FIPS — the assertion is meaningless"; exit 1; }
           echo "FIPS provenance is asserted end-to-end"
+
+  # ── aarch64: the architecture the appliance ACTUALLY runs ────────────────
+  #
+  # Everything above runs on amd64. The appliance is a GB10 — aarch64 — and
+  # aarch64 is the entire reason CMVP #5247 was selected. Until this lane, CI
+  # had NEVER EXECUTED A SINGLE TEST on it: `go build` cross-compiled arm64,
+  # which proves the code compiles, not that the FIPS module behaves.
+  #
+  # That gap matters more here than for ordinary code. The strict
+  # `fips140=only` runtime rejects non-approved algorithms at RUN time, and a
+  # module's approved-path behaviour is an architecture-specific property of
+  # the validated boundary — the one thing a cross-compile cannot tell you.
+  #
+  # GitHub's ubuntu-24.04-arm runners make this a native lane rather than a
+  # QEMU emulation, so a failure here is a real failure, not a emulator quirk.
+  aarch64-fips:
+    name: aarch64 FIPS (native)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: confirm this really is aarch64
+        run: |
+          set -euo pipefail
+          arch="$(go env GOARCH)"
+          echo "GOARCH=${arch} uname=$(uname -m)"
+          # A lane that silently ran on amd64 would be worse than no lane: it
+          # would report aarch64 coverage the product does not have.
+          [ "$arch" = "arm64" ] || { echo "::error::lane is not aarch64 (GOARCH=${arch})"; exit 1; }
+
+      - name: test (FIPS 140-3 module)
+        run: GOFIPS140=v1.0.0 go test ./...
+
+      # Same deny-list as the amd64 tier (#11) — not an allowlist, so a new
+      # approved-path test is covered here by default too.
+      - name: strict FIPS (approved path only)
+        run: >-
+          GOFIPS140=v1.0.0 GODEBUG=fips140=only
+          go test -skip '(MLDSA|ML_DSA)' -v ./... 2>&1 | tee strict-fips-arm64.log
+          && test "${PIPESTATUS[0]}" -eq 0
+
+      - name: assert the strict tier actually ran
+        run: |
+          set -euo pipefail
+          ran=$(grep -c '^--- PASS' strict-fips-arm64.log || true)
+          echo "aarch64 strict FIPS tier executed ${ran} tests"
+          MIN=40
+          if [ "$ran" -lt "$MIN" ]; then
+            echo "::error::aarch64 strict tier ran ${ran} tests, expected >= ${MIN}"
+            exit 1
+          fi
+
+      - name: FIPS provenance assertion (aarch64 binary)
+        run: |
+          set -euo pipefail
+          GOFIPS140=v1.0.0 go build -o /tmp/bundle-fips-arm64 ./cmd/bundle
+          /tmp/bundle-fips-arm64 version
+          /tmp/bundle-fips-arm64 version | grep -qE 'fips140:[[:space:]]*v1\.0\.0' \
+            || { echo "::error::aarch64 FIPS build did not report fips140=v1.0.0"; exit 1; }
+          echo "the binary the appliance actually ships reports the validated module"

@@ -27,10 +27,19 @@ test:
 test-fips:
 	GOFIPS140=$(GOFIPS140) go test ./...
 
-# Strict approved-path-only test (the phase-1 trust path incl. the CLI verify).
+# Strict approved-path-only test: EVERYTHING except the deliberately-excluded
+# ML-DSA hedge (not in the validated module until ~2027).
+#
+# Deny-list, not allow-list (#11). This target and CI previously each carried
+# their own `-run` prefix allowlist and had ALREADY DIVERGED — CI listed
+# TestSegment, this did not. Worse, a `-run` matching nothing exits 0, so the
+# strict tier could pass having executed no tests at all.
+#
+# Inverted, there is nothing to keep in sync but the skip pattern, and a new
+# approved-path test is covered by default rather than by remembering.
 test-strict:
 	GOFIPS140=$(GOFIPS140) GODEBUG=fips140=only \
-	  go test -run '^(TestSignVerify|TestVerifyRejects|TestSignRejects|TestStream|TestKeywrap|TestWrap|TestUnwrap|TestPolicy|TestMode|TestSealOpen|TestCLI)' ./...
+	  go test -skip '(MLDSA|ML_DSA)' ./...
 
 # FIPS-built CLI for the aarch64 appliance (/opt/blakbox/bin/bundle).
 appliance:

@@ -48,10 +48,45 @@ jobs:
       # ML-DSA-87 is deliberately EXCLUDED: it is not in the validated module
       # (a phase-2 hedge, AU-side) and is not a validated-PQC claim until the
       # module certifies it (~2027).
+      #
+      # DENY-LIST, NOT ALLOW-LIST (#11). This was a `-run` regex naming test
+      # prefixes, which meant any new approved-path test whose name fell
+      # outside the list was silently dropped from the strict gate — and a
+      # `-run` matching nothing exits 0, so the tier could pass vacuously.
+      #
+      # It had already happened. Four tests were outside the gate when this was
+      # inverted, and they were not obscure ones:
+      #
+      #   TestEnforced2of2RejectsEcdsaOnly   TestHybridSignEnforced2of2
+      #   TestHybridBackwardCompatiblePhase1 TestHybridRejectsTamper
+      #
+      # — the 2-of-2 dual-signer enforcement tests, i.e. precisely the trust
+      # boundary this tier exists to prove. They passed under fips140=only the
+      # whole time; they simply were not being run there.
+      #
+      # Inverted, new tests are covered BY DEFAULT and only deliberate
+      # exclusions are enumerated.
       - name: strict FIPS (approved path only)
         run: >-
           GOFIPS140=v1.0.0 GODEBUG=fips140=only
-          go test -run '^(TestSignVerify|TestVerifyRejects|TestSignRejects|TestStream|TestKeywrap|TestWrap|TestUnwrap|TestPolicy|TestMode|TestSealOpen|TestCLI|TestSegment)' ./...
+          go test -skip '(MLDSA|ML_DSA)' -v ./... 2>&1 | tee strict-fips.log
+          && test "${PIPESTATUS[0]}" -eq 0
+
+      # A gate that runs zero tests exits 0. Assert the tier actually executed
+      # something — the failure mode this whole issue is about is a check that
+      # silently stops checking.
+      - name: assert the strict tier actually ran
+        run: |
+          set -euo pipefail
+          ran=$(grep -c '^--- PASS' strict-fips.log || true)
+          echo "strict FIPS tier executed ${ran} tests"
+          # Floor, not an exact count: it may only ever be RAISED. If a change
+          # drops it, the gate lost coverage and that is the bug, not the floor.
+          MIN=40
+          if [ "$ran" -lt "$MIN" ]; then
+            echo "::error::strict FIPS tier ran ${ran} tests, expected >= ${MIN} — the gate lost coverage"
+            exit 1
+          fi
 
       # The appliance is aarch64 (GB10 / DGX OS 7): every shippable binary
       # must cross-compile for it under the FIPS module. Build-plan Sprint-1

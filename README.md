@@ -11,8 +11,15 @@ The format and verifier are published so customers (and their assessors) can ver
 artifacts **independently, without trusting us** — the "verifiable transparency" property.
 
 Consumed by:
-- `Blak-Box/exporter` — customer-side, produces bundles
-- `Blak-Box/appliance` — on-box airlock (scanner / egress / offline verifier); consumes by **spec + verifier binary**, never links this Go directly
+- `Blak-Box/exporter` — customer-side, produces bundles (links this module)
+- `Blak-Box/appliance` — on-box airlock: **five Go modules link this library
+  directly** (`attestd`, `receiver`, `verifier`, `scanner`, `egress`), two of
+  them via local `replace` directives pending the first contract tag.
+  *(Corrected 2026-08-05 — this line previously claimed the appliance
+  "consumes by spec + verifier binary, never links this Go directly", which
+  has not been true since the airlock modules landed. The independent-verify
+  property still holds: the format is fully specified in SPEC.md and an
+  assessor can implement it without this code.)*
 
 ## Crypto (design: `docs/24-tender-airlock.md` §5 in the appliance repo)
 - Envelope: in-toto v1 Statement in a **DSSE v1.0.2** envelope, verified with a **2-of-2 algorithm-typed threshold**.
@@ -27,8 +34,10 @@ AES-256-GCM STREAM (D1) + ECDH-P384 key wrap (D4); and the ML-DSA-87 second sign
 hedge — not FIPS-validated yet, so never the sole trust path). The phase-1 path passes strict
 `fips140=only`; ML-DSA runs under the FIPS build but outside strict mode by design.
 
-The `bundle` CLI ships from this repo's release workflow (FIPS-built, provenance-asserted:
-`bundle version` reports `fips140:v1.0.0`; SHA256SUMS attached per release). Still to land:
+The `bundle` CLI is BUILT by this repo's release workflow (FIPS-built, provenance-asserted:
+`bundle version` reports `fips140:v1.0.0`; SHA256SUMS attached per tag-triggered release) —
+note no `v*` tag has been pushed since the workflow landed, so no released binaries exist
+yet; the appliance installs a locally-built copy at factory time. Still to land:
 FastCDC chunk store, published KAT test vectors, and the official
 `in-toto/attestation/go/v1` Statement type. The Ed25519 -> ECDSA P-384 update-chain
 migration consumes this library **once** for the whole product.

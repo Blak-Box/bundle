@@ -1,5 +1,12 @@
 # bundle
 
+> **ℹ BlakBox pivoted on 2026-08-07** to an industry-agnostic tender-builder appliance.
+> **This repo survives the pivot** — the bundle format is directly reusable for tender delivery
+> and model-flash bundles, and it is scheduled to *grow* (SPEC v2 manifest-of-files payload,
+> `lan/` OpenAPI + TLS profile, a `model-bundle/` statement type). Nothing here is superseded.
+> The plan is `appliance/docs/PIVOT-PROGRAMME.md`; this repo's public contracts are themselves
+> part of the trust story.
+
 The BlakBox **bundle format** — the shared contract that crosses the air gap.
 
 Two things that must stay in lockstep:

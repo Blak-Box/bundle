@@ -1,0 +1,60 @@
+# Commit gates for the bundle crypto core.
+#
+# WHY THIS EXISTS. appliance had pre-commit; its siblings did not. A gate that
+# holds in one repo and not the others produces exactly the drift the repo carve
+# is meant to end — and after the split there will be seven repos, each needing
+# the same guarantee. (Board: "Install the commit gates in every repo, not just
+# appliance", P0.)
+#
+# WHY THIS REPO AND NOT THE OTHERS. bundle is the only repo that exists today
+# AND survives the carve. `exporter` is superseded and is archived by the carve's
+# last card, `ops-docs` and `BlakBox_V1` are already archived and read-only, and
+# `.github` carries a profile README with no code. Adding gates to a repo about
+# to become read-only is work with a known expiry date. The carve cards carry the
+# requirement for the six new repos.
+#
+# THE GATES MIRROR CI, which is the point — a hook that checks something CI does
+# not, or misses something CI does, teaches the wrong lesson. `.github/workflows/ci.yml`
+# runs gofmt, `go vet`, build, `go test -race`, then the FIPS and strict-FIPS tiers
+# and a cross-compile matrix. gofmt and vet are the two that are fast enough to sit
+# in front of a commit: measured on this repo, 0.15 s and ~4 s warm. Build, tests
+# and the FIPS tiers stay in CI where they belong — a commit hook that takes a
+# minute is a commit hook people learn to skip with `--no-verify`.
+#
+# One-time setup per clone:
+#     pre-commit install
+#
+repos:
+  # ── Whitespace / file-shape ─────────────────────────────────────────
+  # Byte-identical to appliance's block, deliberately: the language-agnostic
+  # half of the gate set should be the same everywhere, so a contributor moving
+  # between repos meets one set of rules rather than a dialect per repo.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+
+  # ── Go: format + vet ────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt (-l, must print nothing)
+        # `gofmt -l` LISTS offenders and exits 0 either way, so a bare call is a
+        # gate that cannot fail. The test on the output is the gate.
+        entry: bash -c 'out=$(gofmt -l .); if [ -n "$out" ]; then echo "gofmt would reformat:"; echo "$out"; exit 1; fi'
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-vet
+        name: go vet ./...
+        entry: go vet ./...
+        language: system
+        types: [go]
+        pass_filenames: false

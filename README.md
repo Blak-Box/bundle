@@ -48,3 +48,21 @@ yet; the appliance installs a locally-built copy at factory time. Still to land:
 FastCDC chunk store, published KAT test vectors, and the official
 `in-toto/attestation/go/v1` Statement type. The Ed25519 -> ECDSA P-384 update-chain
 migration consumes this library **once** for the whole product.
+
+## Working on this repo
+
+One-time setup per clone, matching the gate discipline in the other Blak-Box repos:
+
+```bash
+pre-commit install
+```
+
+That installs the hooks in `.pre-commit-config.yaml`: the shared file-shape checks
+(byte-identical to the appliance repo's, so the language-agnostic half of the gate set is
+the same everywhere), plus `gofmt -l` and `go vet ./...`. Together they run in about four
+seconds warm.
+
+They deliberately mirror the fast half of `ci.yml` and stop there. Build, `go test -race`
+and the FIPS and strict-FIPS tiers stay in CI: a commit hook that takes a minute is a
+commit hook people learn to skip with `--no-verify`, and a gate that is routinely bypassed
+is worse than no gate because it still reads as protection.

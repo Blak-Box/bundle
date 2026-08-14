@@ -1,6 +1,6 @@
 module github.com/blak-box/bundle
 
-go 1.26
+go 1.26.1
 
 require (
 	filippo.io/mldsa v0.0.0-20260711112038-ff3f469cee29

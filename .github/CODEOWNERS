@@ -1,0 +1,50 @@
+# CODEOWNERS — this repo had none, and it is the PUBLIC one.
+#
+# Added 2026-08-18 as the precondition for branch protection. Order matters: a
+# "require Code-Owner review" rule against a repo with no owners is the
+# empty-lane-team trap in reverse — the rule looks enforced and blocks nothing.
+# So the owners land first, the ruleset second.
+#
+# WHY THIS REPO IS THE URGENT ONE. `bundle` is PUBLIC and carries the crypto
+# core (DSSE signing, ML-DSA, key wrapping, the policy engine) and SPEC.md, the
+# contract every other repo builds against. It also had ZERO rulesets while the
+# GB10 machine account held `push` — measured 2026-08-18. All sixteen commits on
+# main arrived through PRs #1-#16, so the discipline has held by convention,
+# which is precisely the state that reads as enforcement right up until the day
+# it doesn't.
+#
+# ⚠ A TEAM WITHOUT WRITE ACCESS IS SILENTLY IGNORED AS AN OWNER. Before trusting
+# this file, confirm @Blak-Box/core has write on THIS repo:
+#     gh api repos/Blak-Box/bundle/teams -q '.[] | "\(.slug) \(.permission)"'
+# If it is absent, add it — otherwise the code-owner rule passes vacuously and
+# this file is decoration.
+#
+# Lane note (decision 13): the contracts surface is lane:autonomous work — the
+# GB10 opens the PRs. It owns no paths HERE as an owner, because the machine
+# account is in no team and can never approve its own work. Humans review.
+
+# Fallback — nothing merges wholly unreviewed.
+*                       @Blak-Box/core
+
+# ── THE CRYPTO CORE — both humans review. A silent change here is the one that
+#    cannot be caught downstream: every appliance and every shipped bundle
+#    verifies against exactly this code, and a weakened signature check looks
+#    identical to a working one until someone forges a payload.
+/sign.go                @Blak-Box/lane-product @Blak-Box/lane-knowledge
+/mldsa.go               @Blak-Box/lane-product @Blak-Box/lane-knowledge
+/keys.go                @Blak-Box/lane-product @Blak-Box/lane-knowledge
+/keywrap.go             @Blak-Box/lane-product @Blak-Box/lane-knowledge
+/policy.go              @Blak-Box/lane-product @Blak-Box/lane-knowledge
+
+# ── THE CONTRACT ITSELF — SPEC.md is what the other repos implement against,
+#    so a change here is a change to every consumer, including ones not written
+#    yet (the LAN OpenAPI, the model-bundle and seed-bundle statement types).
+/SPEC.md                @Blak-Box/lane-product @Blak-Box/lane-knowledge
+
+# ── CI AND SUPPLY CHAIN — the FIPS tiering and the arm64 cross-compile are the
+#    evidence behind the appliance's own claims; whoever can edit these can
+#    quietly stop them running.
+/.github/               @Blak-Box/lane-product @Blak-Box/lane-knowledge
+/Makefile               @Blak-Box/lane-product @Blak-Box/lane-knowledge
+/go.mod                 @Blak-Box/lane-product @Blak-Box/lane-knowledge
+/go.sum                 @Blak-Box/lane-product @Blak-Box/lane-knowledge

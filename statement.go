@@ -18,6 +18,14 @@ const (
 
 	// BundlePredicateType is BlakBox's bundle predicate.
 	BundlePredicateType = "application/vnd.blakbox.bundle+json"
+
+	// SourceBatchPredicateType is the desktop-connector source-batch predicate
+	// (SPEC §4): a signed batch of customer files walked from a connected
+	// source, bound for the box's evidence corpus. A distinct type — never a
+	// reuse of the export predicate — because the two are different ingress
+	// trust classes and the verifier's exact-match pin is what stops
+	// cross-type replay.
+	SourceBatchPredicateType = "application/vnd.blakbox.source-batch+json"
 )
 
 // Statement is an in-toto v1 Statement.

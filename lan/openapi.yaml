@@ -1,0 +1,137 @@
+openapi: 3.1.0
+info:
+  title: BlakBox receiver — box ↔ desktop LAN surface
+  version: "1.0.0"
+  description: |
+    The HTTP surface the appliance's airlock receiver serves to a paired desktop over the LAN.
+
+    THIS DOCUMENTS WHAT IS IMPLEMENTED, not what is planned. `/v1/app/*` — the single mTLS front
+    door the desktop app will eventually use — is deliberately absent because it does not exist.
+
+    THE BOX NEVER INITIATES. Every exchange here is desktop-initiated; the receiver only ever
+    answers. That is enforced below the HTTP layer and does not depend on this document:
+      * `installNeverInitiateGuard()` poisons `http.DefaultTransport` and `http.DefaultClient`,
+        so an outbound request panics rather than succeeding quietly;
+      * `SystemCallFilter=~connect:EPERM` in the systemd unit refuses `connect(2)` at the kernel;
+      * CI runs a source-level grep gate for outbound primitives and a netns/nft-counter oracle
+        that counts off-host SYNs and asserts zero.
+    A reader auditing this claim should check those three, not this file.
+externalDocs:
+  description: Bundle format and predicate types
+  url: https://github.com/Blak-Box/bundle/blob/main/SPEC.md
+
+servers:
+  - url: https://{box}:8444
+    description: |
+      The enrolled box on the local network. Default listen address is `:8444`
+      (`BOX_RECEIVER_LISTEN`). There is no public deployment and no DNS name is assumed —
+      the desktop dials an address it was given at pairing.
+    variables:
+      box:
+        default: box.local
+
+security:
+  - mutualTLS: []
+
+paths:
+  /v1/healthz:
+    get:
+      summary: Liveness
+      operationId: healthz
+      description: |
+        Unauthenticated liveness only. Carries no state, no version and no identity —
+        deliberately, so an unpaired caller learns nothing about the box from it.
+      security: []
+      responses:
+        "200":
+          description: The receiver is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+
+  /v1/bundle:
+    post:
+      summary: Deliver a sealed bundle to the box
+      operationId: postBundle
+      description: |
+        The only ingress. The body is a **deterministic tar stream** whose entries appear in a
+        fixed order:
+
+          1. `manifest.dsse`  — the DSSE envelope over an in-toto v1 Statement
+          2. `payload.enc`    — the encrypted payload
+          3. `MANIFEST.txt`   — optional, trailing, human-readable
+
+        Order is normative. The manifest arrives first so the receiver can decide whether it is
+        willing to accept the payload before reading it, rather than buffering an unverified blob.
+
+        The Statement's `predicateType` selects the ingress class, and the receiver matches it
+        exactly. That exact match IS the cross-class replay defence: a bundle sealed as one class
+        must not be acceptable as another even when correctly signed, which is why the AAD is
+        re-derived per type rather than shared.
+      requestBody:
+        required: true
+        content:
+          application/x-tar:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: Accepted and quarantined for scanning.
+        "400":
+          description: Malformed tar, wrong entry order, or a missing required entry.
+        "409":
+          description: |
+            Already delivered. Re-delivery of an identical bundle is a conflict rather than a
+            silent success, so a duplicate cannot masquerade as a fresh submission.
+        "415":
+          description: |
+            Body was not `application/x-tar` of `manifest.dsse` then `payload.enc`.
+        "422":
+          description: |
+            Well-formed but refused — signature, anchor, predicate type or policy. The receiver
+            does not distinguish these to the caller: telling an unauthenticated peer *which*
+            check failed is an oracle.
+        "500":
+          description: Receiver-side failure.
+
+  /v1/export:
+    get:
+      summary: Collect the outbox
+      operationId: getExport
+      description: |
+        Egress of material the box has already decided to release. Desktop-initiated, like
+        everything else here.
+      responses:
+        "200":
+          description: The outbox stream.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "500":
+          description: Outbox unavailable.
+
+components:
+  securitySchemes:
+    mutualTLS:
+      type: mutualTLS
+      description: |
+        TLS 1.3 minimum, with `RequireAndVerifyClientCert` against the on-box CA — the desktop
+        presents a client certificate that CA issued at pairing, and the box CA certificate is the
+        desktop's only trusted root. There is no bearer token and no shared secret: possession of
+        an issued key pair IS the authorisation.
+
+        Key agreement pins `SecP384r1MLKEM1024` first (PQ-hybrid, ISM-1917) with classical
+        `CurveP384` as fallback. **X25519 variants are excluded**, and not for preference:
+        `X25519MLKEM768` panics under `GODEBUG=fips140=only`, so including it would make the
+        FIPS-only tier crash rather than degrade.
+
+        `Config.CipherSuites` is not set, because crypto/tls IGNORES it for TLS 1.3.

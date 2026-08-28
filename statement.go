@@ -26,6 +26,24 @@ const (
 	// trust classes and the verifier's exact-match pin is what stops
 	// cross-type replay.
 	SourceBatchPredicateType = "application/vnd.blakbox.source-batch+json"
+
+	// ModelBundlePredicateType is the factory-side model bundle (SPEC §5): the
+	// set of model weights an appliance is imaged with, signed by the factory and
+	// verified on the box before use.
+	//
+	// THE GAP IT CLOSES. scripts/fetch_models.sh in the appliance already builds
+	// this artifact — it downloads weights on a CONNECTED machine, writes a
+	// CHECKSUMS file, and rsyncs the tree to /opt/blakbox/models on the air-gapped
+	// box, whose instruction is `sha256sum -c CHECKSUMS`. That is INTEGRITY
+	// WITHOUT AUTHENTICITY: a checksum file is exactly as trustworthy as the
+	// channel it arrived on, and whoever can alter the rsync can alter the weights
+	// and the checksums together. Signing the manifest makes the box able to tell
+	// the factory's weights from someone else's.
+	//
+	// A distinct type for the same reason SourceBatchPredicateType is distinct:
+	// weights and customer evidence are different trust classes, and the
+	// verifier's exact-match pin is what stops one being replayed as the other.
+	ModelBundlePredicateType = "application/vnd.blakbox.model-bundle+json"
 )
 
 // Statement is an in-toto v1 Statement.

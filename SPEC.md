@@ -94,3 +94,51 @@ Rules a verifier MUST enforce, beyond §2's envelope checks:
 - **Classification is mandatory** exactly as for exports; a batch without it is rejected
   before decryption.
 
+### 4.2 `model-bundle` — factory model sets (schema 1)
+
+`application/vnd.blakbox.model-bundle+json`
+
+The set of model weights an appliance is imaged with, signed by the factory and verified on the
+box before any of it is loaded.
+
+**What it replaces.** `scripts/fetch_models.sh` in the appliance already builds this artifact: it
+downloads weights on a CONNECTED machine, verifies upstream SHA-256s, writes a `CHECKSUMS` file,
+and the tree is rsynced to `/opt/blakbox/models` on the air-gapped box, whose documented check on
+arrival is `sha256sum -c CHECKSUMS`. That is **integrity without authenticity** — a checksum file
+is exactly as trustworthy as the channel that delivered it, and whoever can alter the rsync alters
+the weights and the checksums together. Signing the manifest is what lets a box tell the factory's
+weights from someone else's.
+
+```jsonc
+{
+  "models": [
+    {
+      "repo":      "…",     // upstream identifier the factory fetched
+      "revision":  "…",     // COMMIT SHA, never a tag — a tag is a name someone else can move
+      "digest":    { "sha256": "…" },  // digest of the materialised directory
+      "sizeBytes": 0,       // a truncated transfer is a mismatch, not a puzzling hash
+      "role":      "…",     // generation | embedding | reranking | entailment | ocr | ner
+      "origin":    "…",     // country/organisation of origin — REQUIRED
+      "licence":   "…"      // SPDX identifier where one exists — REQUIRED
+    }
+  ],
+  "builtAt":      "RFC 3339 UTC",
+  "builderRef":   "…",      // build script and its revision
+  "targetSerial": "…"       // OPTIONAL; empty = any box. A serial binds one unit.
+}
+```
+
+Rules a verifier MUST enforce, beyond §2's envelope checks:
+
+- **`origin` and `licence` are REQUIRED and never omitted.** The "no Chinese-origin models"
+  constraint is enforced today by a COMMENT in the build script naming the banned defaults, and a
+  comment cannot be checked on the appliance. Carrying both inside the signed predicate makes the
+  ban verifiable at load time by the machine that has to honour it. An absent value MUST be
+  visible as an empty string a verifier can reject — never omitted so the manifest merely looks
+  well-formed.
+- **All-or-nothing.** A box accepting a subset would run a configuration nobody signed.
+- **`revision` is a commit sha.** A tag names a state its owner can move afterwards.
+- **Its own AAD family**, `blakbox/model-bundle/v1|`, never the export or source-batch families —
+  weights and customer evidence are different trust classes, and the AEAD layer is what refuses a
+  cross-type payload splice even when every signature verifies.
+

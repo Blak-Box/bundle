@@ -27,7 +27,7 @@ const (
 	// cross-type replay.
 	SourceBatchPredicateType = "application/vnd.blakbox.source-batch+json"
 
-	// ModelBundlePredicateType is the factory-side model bundle (SPEC §5): the
+	// ModelBundlePredicateType is the factory-side model bundle (SPEC §4.2): the
 	// set of model weights an appliance is imaged with, signed by the factory and
 	// verified on the box before use.
 	//

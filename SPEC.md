@@ -31,8 +31,8 @@ envelope = DSSE v1.0.2; sig[0] ECDSA P-384/SHA-384; sig[1] ML-DSA-87 (phase 2);
 ```
 
 ## 3. Open items
-- Finalise the predicate schema for the `bundle` and `export` types (provenance, custody note,
-  skip list, sequence + predecessor id). The `source-batch` type is now normative — §4.
+- Finalise the predicate schema for the `bundle` (software-update) type. `source-batch` (§4.1),
+  `model-bundle` (§4.2) and `export` (§4.3) are now normative.
 - Test vectors.
 - ML-DSA-87 second-signature slot.
 
@@ -45,7 +45,7 @@ or pattern match.
 | type | declared where | status |
 |---|---|---|
 | `application/vnd.blakbox.bundle+json` | this repo (`statement.go`) | schema open (§3) |
-| `application/vnd.blakbox.export+json` | caller-side (`exporter/export/build.go`) | schema owned by the exporter |
+| `application/vnd.blakbox.export+json` | caller-side (`exporter/export/build.go`) | **normative — §4.3** |
 | `application/vnd.blakbox.source-batch+json` | this repo (`statement.go`) | **normative below** |
 
 ### 4.1 `source-batch` — desktop-connector batches (schema 1)
@@ -66,7 +66,7 @@ corpus. Same envelope, payload encryption and keywrap as §2; the predicate:
   "predecessor": "…",       // manifest.dsse SHA-256 of sequence n-1 ("" at 1)
   "classification": "…",    // marking, REQUIRED — unmarked is an explicit value, never absent
   "inventory": [            // the manifest-of-files; paths portable per the exporter's policy
-    { "path": "…", "object_type": "file", "size": 0, "last_modified": "…", "sha256": "…" }
+    { "path": "…", "object_type": "file", "size": 0, "mtime": "…", "sha256": "…" }
   ],
   "removed": ["…"],         // positive removals only — see the exclusion rule below
   "skipped": [ { "path": "…", "reason": "…" } ],
@@ -74,8 +74,8 @@ corpus. Same envelope, payload encryption and keywrap as §2; the predicate:
   "keywrap": { /* §2 keywrap stanza */ },
   "payload": {
     "name": "payload.enc",
-    "aad":  "blakbox/source-batch/v1|source=%s|seq=%d",
-    "size": 0, "sha256": "…", "sha384": "…"
+    "size": 0,
+    "aad":  "blakbox/source-batch/v1|source=%s|seq=%d"
   }
 }
 ```
@@ -142,3 +142,83 @@ Rules a verifier MUST enforce, beyond §2's envelope checks:
   weights and customer evidence are different trust classes, and the AEAD layer is what refuses a
   cross-type payload splice even when every signature verifies.
 
+
+### 4.3 `export` — box-authored evidence exports (schema 1)
+
+A signed batch of files leaving the box across the airlock. Same envelope, payload encryption
+and keywrap as §2. Its schema is **owned by the caller** (`exporter/export/build.go`) rather
+than declared in this repo, and this section is normative for it.
+
+It is documented here because it was not: a predicate that ships, is enforced by a verifier
+every box runs, and whose absence from the public contract meant a second implementation had
+nothing to implement against.
+
+```jsonc
+{
+  "schema": 1,
+  "source": "…",            // enrolled source label — the receiver's per-source chain key
+  "exporter": {             // custody note: WHO produced this bundle
+    "version": "…", "host": "…", "user": "…", "key_fingerprint": "…"
+  },
+  "created_at": "RFC 3339",
+  "sequence": 1,            // per-source monotonic, first accepted bundle is 1
+  "predecessor": "…",       // manifest.dsse SHA-256 of sequence n-1 ("" at 1)
+  "classification": "…",    // marking, REQUIRED — unmarked is an explicit value, never absent
+  "inventory": [            // the manifest-of-files, hashed from the exact bytes written
+    { "path": "…", "object_type": "file", "size": 0, "mtime": "…", "sha256": "…" }
+  ],
+  "removed": ["…"],         // positive removals only
+  "skipped": [ { "path": "…", "reason": "…" } ],
+  "keywrap": { /* §2 keywrap stanza */ },
+  "payload": {
+    "name": "payload.enc",
+    "size": 0,
+    "aad":  "blakbox/export/v1|source=%s|seq=%d"
+  }
+}
+```
+
+`inventory`, `payload` and `keywrap` are the SAME structures §4.1 uses — the two predicates
+share their Go types, so a field named differently in one section than the other is a defect in
+this document, not a difference in the format. That equality is now checked (`spec_shape_test.go`).
+
+**Where the payload digests live.** Not in `payload`. `payload.enc`'s SHA-256 and SHA-384 are
+the in-toto **subject** digests of §2, and the verifier re-binds them there. A verifier written
+to look for `payload.sha256` finds nothing and either fails or, worse, skips the re-bind — which
+is why this document previously naming them under `payload` was not cosmetic.
+
+Rules a verifier MUST enforce, beyond §2's envelope checks. The order is load-bearing and is the
+order `exporter/export/open.go` implements:
+
+1. **DSSE against PINNED anchors, never the envelope `keyid`.** A keyid is attacker-supplied.
+2. **Predicate-type pin, exact string match** against the caller's allowlist. An update bundle
+   or any other statement type signed under the same key must not open as an export.
+3. **AAD family.** The payload AAD begins `blakbox/export/v1|` and MUST re-derive exactly from
+   the predicate type's own family plus the signed `source` and `sequence`. The AAD is signed,
+   so this binds type ↔ family ↔ chain position even against a key holder composing a
+   cross-class hybrid: an export payload can never ride under a source-batch manifest, nor under
+   another chain slot.
+4. **Re-bind before trusting.** `payload.name` MUST be `payload.enc`; recompute that file's
+   SHA-256/SHA-384 and require equality with the SIGNED subject digests. A valid signature paired
+   with a different payload file is rejected.
+5. **Sequence and predecessor policy BEFORE any decryption** — `sequence == last + 1` and
+   `predecessor ==` the last-accepted manifest digest. Replay and rollback are refused while the
+   content is still ciphertext.
+6. **`classification` is mandatory**; a bundle without it is rejected before decryption.
+7. **Nothing unauthenticated is parsed.** Unwrap the CEK, decrypt the STREAM to a spool inside a
+   staging directory, and parse the tar only after decryption returns success. No truncated or
+   unauthenticated plaintext ever reaches a parser.
+8. **Extraction is atomic and set-exact.** Per-entry paths are traversal-guarded; every extracted
+   file is re-verified against the signed inventory as **exact set equality** — a file in the
+   payload but not the inventory, or in the inventory but not the payload, is a failure, not a
+   warning. Only then is the staging directory renamed into place. A failed open leaves no
+   partial content, and the plaintext spool never leaves the staging directory.
+
+**The digest to persist on acceptance** is the SHA-256 of the exact `manifest.dsse` bytes that
+were signature-verified. Never re-read the file from the media — a second read is
+unauthenticated — and never re-marshal the parsed envelope, because DSSE has no canonical
+encoding and the digest would not match the exporter's `predecessor` chain.
+
+**A bundle directory suffixed `.uncommitted` MUST never be shipped.** It marks a bundle whose
+state commit did not succeed; the next run re-exports the same window under the SAME sequence
+number, and two different bundles at one sequence fork the chain.

@@ -41,7 +41,7 @@ func readSpec(t *testing.T) string {
 // The routes the receiver serves today. If the receiver gains or loses one, this
 // list and the spec must move together; the appliance-side mux parity test is
 // what will catch the receiver changing without the spec.
-var documentedRoutes = []string{"/v1/healthz", "/v1/bundle", "/v1/export"}
+var documentedRoutes = []string{"/v1/healthz", "/v1/bundle", "/v1/export", "/v1/audit/egress"}
 
 func TestSpecDocumentsEveryKnownRoute(t *testing.T) {
 	spec := readSpec(t)

@@ -119,6 +119,110 @@ paths:
         "500":
           description: Outbox unavailable.
 
+  /v1/audit/egress:
+    get:
+      summary: The egress record - what this box served, and every time it refused
+      operationId: getAuditEgress
+      description: |
+        The record behind the desktop's egress transparency panel: every audit row whose action
+        starts with `egress.`, newest first, plus totals over the WHOLE log.
+
+        The box's central claim is a negative - it never initiates - and a negative cannot be
+        shown with a status light. What can be shown is every time the box ANSWERED, and every
+        time it REFUSED. Of the six egress actions the receiver writes, four are refusals, and
+        `counts` carries every action, so a caller cannot render "served" without also being
+        handed the refusals.
+
+        It reports what the box RECORDED SERVING. It is not proof that nothing else left: the
+        kernel's own view, the nftables `blakbox-egress-denied` counter, is not read here.
+
+        Reading this record is itself a crossing and is logged as one
+        (`egress.audit_served_lan`), so a caller's own reads appear in later responses. A panel
+        that polls must separate its own reads from the exports it exists to show; this route
+        does not.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: |
+            How many of the newest matching rows to return. Defaults to 100. A value above 1000
+            is clamped to 1000 rather than refused; a missing, non-numeric or non-positive value
+            falls back to the default. The whole log is scanned either way, so `counts` and
+            `matched` are totals whatever `limit` is.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        "200":
+          description: |
+            The record. A box that has never served anything has no log yet and answers with
+            zero counts and no rows - a genuine zero, and a different answer from the 503 below.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schema, read_at, counts, rows, scanned, matched, truncated, malformed]
+                properties:
+                  schema:
+                    type: integer
+                    const: 1
+                    description: |
+                      Body version. A reader that does not recognise it must refuse rather than
+                      guess at fields.
+                  read_at:
+                    type: string
+                    format: date-time
+                  counts:
+                    type: object
+                    description: |
+                      Every `egress.*` action seen in the whole log, not only those in `rows`. A
+                      truncated page must not shrink the totals a panel displays.
+                    additionalProperties:
+                      type: integer
+                  rows:
+                    type: array
+                    description: The newest `limit` matching rows, newest first.
+                    items:
+                      type: object
+                      required: [ts, actor, action]
+                      properties:
+                        ts:
+                          type: string
+                        actor:
+                          type: string
+                        action:
+                          type: string
+                        details:
+                          type: object
+                  scanned:
+                    type: integer
+                    description: Log lines read.
+                  matched:
+                    type: integer
+                    description: Lines whose action starts with `egress.`.
+                  truncated:
+                    type: boolean
+                    description: |
+                      True when `rows` is a page of `matched` rather than all of it, so a screen
+                      can say "showing 100 of 4,812" instead of implying it has everything.
+                  malformed:
+                    type: integer
+                    description: |
+                      Lines that did not parse. A log with unparseable rows is not a clean log, and
+                      a panel that dropped them silently would report a tidier boundary than the box
+                      has.
+        "503":
+          description: |
+            Either the receiver is at its concurrency limit (`busy`), or the audit record could not
+            be read. The second is NOT the same as having served nothing: the box cannot say what
+            it has served, and it answers that way rather than with an empty record.
+          content:
+            text/plain:
+              schema:
+                type: string
+
 components:
   securitySchemes:
     mutualTLS:
